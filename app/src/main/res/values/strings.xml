@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">busdetection_beta</string>
+    <string name="inference_time">%dms</string>
+</resources>
