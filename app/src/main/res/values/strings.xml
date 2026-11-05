@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">busdetection_beta</string>
     <string name="inference_time">%dms</string>
+    <string name="failed_to_load_model">Failed to load detection model</string>
 </resources>

@@ -54,6 +54,9 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:${cameraxVersion}")
     implementation("androidx.camera:camera-view:${cameraxVersion}")
 
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    // TFLite 2.14.0 x86_64 มี known bug (missing DT_HASH/DT_GNU_HASH) โหลด native ไม่ได้บน emulator
+    // 2.17.0 โหลด native ได้ แต่ deterministic crash ตอน Interpreter init กับโมเดล YOLOv8 ที่ export ด้วยเวอร์ชันเก่า
+    // 2.13.0 เป็น pre-regression ที่เข้ากันได้ดีที่สุดกับโมเดลระดับนี้ + native x86_64 ใช้ได้บน emulator
+    implementation("org.tensorflow:tensorflow-lite:2.13.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
 }

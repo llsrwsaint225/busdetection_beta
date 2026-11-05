@@ -45,12 +45,23 @@ class MainActivity : AppCompatActivity(), Detector.DetectorListener {
         }
 
         detector = Detector(this, MODEL_PATH, LABELS_PATH, this)
-        detector.setup()
 
-        if (allPermissionsGranted()) {
-            startCamera()
-        } else {
-            requestPermissions.launch(REQUIRED_PERMISSIONS)
+        // โหลดโมเดลบน background thread เพื่อไม่ให้ UI ค้าง
+        // หาก native lib โหลดไม่ได้ (เช่น ABI/version ไม่ตรง) จะแสดงข้อความแทน crash
+        cameraExecutor.execute {
+            val ready = detector.setup()
+            runOnUiThread {
+                if (!ready) {
+                    binding.textView.text = getString(R.string.failed_to_load_model)
+                    return@runOnUiThread
+                }
+
+                if (allPermissionsGranted()) {
+                    startCamera()
+                } else {
+                    requestPermissions.launch(REQUIRED_PERMISSIONS)
+                }
+            }
         }
     }
 

@@ -3,9 +3,9 @@ package com.llsrwsaintt.busdetection_beta
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
+import android.util.Log
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.common.ops.CastOp
 import org.tensorflow.lite.support.common.ops.NormalizeOp
 import org.tensorflow.lite.support.image.ImageProcessor
@@ -13,8 +13,9 @@ import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.io.BufferedReader
 import java.io.IOException
-import java.io.InputStream
 import java.io.InputStreamReader
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class Detector(
     private val context: Context,
@@ -36,34 +37,69 @@ class Detector(
         .add(CastOp(INPUT_IMAGE_TYPE))
         .build()
 
-    fun setup() {
-        val model = FileUtil.loadMappedFile(context, modelPath)
-        val options = Interpreter.Options()
-        options.numThreads = 4
-        interpreter = Interpreter(model, options)
+    /**
+     * โหลดโมเดลและเริ่ม Interpreter
+     * @return true ถ้าโหลดสำเร็จ, false ถ้าเกิด error (native lib หาย / ABI ไม่ตรง / model เสีย)
+     */
+    fun setup(): Boolean {
+        return try {
+            // FIX: อ่านโมเดลเป็น ByteArray แทน FileUtil.loadMappedFile()
+            // loadMappedFile ใช้ mmap ซึ่งบน x86_64 emulator มักเกิด SIGSEGV (SEGV_ACCERR) กับโมเดลใหญ่
+            // การโหลดทั้งไฟล์เข้า memory โดยตรงหลีกเลี่ยง mmap/execute-only-memory bug ได้
+            val model = readAssetBytes(context, modelPath)
 
-        val inputShape = interpreter?.getInputTensor(0)?.shape() ?: return
-        val outputShape = interpreter?.getOutputTensor(0)?.shape() ?: return
-
-        tensorWidth = inputShape[1]
-        tensorHeight = inputShape[2]
-        numChannel = outputShape[1]
-        numElements = outputShape[2]
-
-        try {
-            val inputStream: InputStream = context.assets.open(labelPath)
-            val reader = BufferedReader(InputStreamReader(inputStream))
-
-            var line: String? = reader.readLine()
-            while (line != null && line != "") {
-                labels.add(line)
-                line = reader.readLine()
+            // FIX: TFLite ต้องการ direct ByteBuffer ที่มี ByteOrder.nativeOrder()
+            // ByteBuffer.wrap(byteArray) สร้าง heap buffer แบบ BIG_ENDIAN (order เริ่มต้นของ Java)
+            // ซึ่ง native lib ปฏิเสธ -> IllegalArgumentException
+            // แก้โดยคัดลอกข้อมูลลง direct ByteBuffer ที่ตั้ง order เป็น nativeOrder()
+            val modelBuffer = ByteBuffer.allocateDirect(model.size).apply {
+                order(ByteOrder.nativeOrder())
+                put(model)
+                rewind()
             }
 
-            reader.close()
-            inputStream.close()
+            val options = Interpreter.Options()
+            options.numThreads = 1
+            options.useXNNPACK = false
+            interpreter = Interpreter(modelBuffer, options)
+
+            val inputShape = interpreter?.getInputTensor(0)?.shape() ?: return false
+            val outputShape = interpreter?.getOutputTensor(0)?.shape() ?: return false
+
+            tensorWidth = inputShape[1]
+            tensorHeight = inputShape[2]
+            numChannel = outputShape[1]
+            numElements = outputShape[2]
+
+            loadLabels()
+            true
+        } catch (e: Exception) {
+            Log.e(
+                TAG,
+                "Failed to initialize model ($modelPath). Check that the TFLite native " +
+                    "library is loadable on this device/ABI.",
+                e
+            )
+            false
+        }
+    }
+
+    private fun readAssetBytes(context: Context, assetPath: String): ByteArray =
+        context.assets.open(assetPath).use { it.readBytes() }
+
+    private fun loadLabels() {
+        try {
+            context.assets.open(labelPath).use { inputStream ->
+                BufferedReader(InputStreamReader(inputStream)).use { reader ->
+                    var line = reader.readLine()
+                    while (!line.isNullOrEmpty()) {
+                        labels.add(line)
+                        line = reader.readLine()
+                    }
+                }
+            }
         } catch (e: IOException) {
-            e.printStackTrace()
+            Log.e(TAG, "Failed to load labels from $labelPath", e)
         }
     }
 
@@ -188,6 +224,7 @@ class Detector(
     }
 
     companion object {
+        private const val TAG = "Detector"
         private const val INPUT_MEAN = 0f
         private const val INPUT_STANDARD_DEVIATION = 255f
         private val INPUT_IMAGE_TYPE = DataType.FLOAT32
